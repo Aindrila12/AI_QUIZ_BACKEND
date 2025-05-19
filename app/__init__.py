@@ -1,9 +1,13 @@
 from flask import Flask
 from flask_cors import CORS
 from app.routes import auth_routes, quiz_routes
+import os
 
 def create_app():
-    app = Flask(__name__)
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    public_folder = os.path.join(project_root, 'public')
+    print("public_folder >>>>>>>>>", public_folder)
+    app = Flask(__name__, static_folder=public_folder, static_url_path='/public')
     CORS(app)  # 🔥 Enables CORS for all routes
 
     # Or to allow specific origins:

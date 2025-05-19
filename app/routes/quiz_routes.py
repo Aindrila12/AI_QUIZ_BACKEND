@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 import random
-from app.dao.quiz_dao import fetch_all_topics, create_attempt, check_user_consent, get_previous_performance, get_next_question_by_level, store_user_answer, update_attempt_complete, get_option_correct_flag, get_all_answers_for_attempt
-from app.validation.quiz_validation import validate_quiz_attempt_data, validate_start_quiz_data, validate_submit_answer_data
+from app.dao.quiz_dao import *
+from app.validation.quiz_validation import *
 import config
 
 quiz_bp = Blueprint('quiz', __name__)
@@ -53,7 +53,9 @@ def start_attempt():
                 'success': True,
                 'status': 200,
                 'message': 'Quiz started! Good luck!',
-                'response': None
+                'response': {
+                    "attempt_id": attemptid
+                }
             })
         else:
             return jsonify({
@@ -90,6 +92,16 @@ def start_quiz():
 
         levelid = 2  # default intermediate
 
+        attemptid = check_attempt(data)
+
+        if attemptid["iscompleted"] == 1:
+            return jsonify({
+                'success': False,
+                'status': 400,
+                'message': 'You have already completed the quiz.',
+                'response': None
+            })
+
         if check_user_consent(userid):
             score = get_previous_performance(userid, topicid)
             if score is not None:
@@ -106,6 +118,7 @@ def start_quiz():
         if question_arr:
             question = random.choice(question_arr)
             question["question_count"] = config.QSN_COUNT
+            question["options"] = get_options_by_questionid(question["question_id"])
             return jsonify({
                 'success': True,
                 'status': 200,
@@ -142,6 +155,8 @@ def submit_answer():
                 'message': 'All fields are required.',
                 'response': None
             })
+        
+        currentlevel = data.get('current_level')
 
         # Step 1: Check correct flag from options table
         is_correct = get_option_correct_flag(data['optionid'])
@@ -163,8 +178,10 @@ def submit_answer():
                 'message': 'Failed to store answer.',
                 'response': None
             })
+        
 
         # Step 3: Mark attempt as completed if last question
+        print("111111111111111", data.get('is_last'), data.get("is_last") == 0)
         if data.get('is_last'):
             if update_attempt_complete(data['attemptid']):
                 return jsonify({
@@ -187,17 +204,26 @@ def submit_answer():
         all_answers = get_all_answers_for_attempt(data['attemptid'])
         total_count = len(all_answers)
         next_level = 2  # default starting level
-
+        print(">>>>>>>>>>>>>>>>>>>>>>>>>", total_count, total_count % 3 == 0 )
         # Decide next level only after 4th, 7th, 10th... questions answered
-        if total_count >= 4 and (total_count - 4) % 3 == 0:
-            set_number, total_in_set, percentage = calculate_set_correctness(all_answers)
+        # if total_count >= 3 and (total_count - 4) % 3 == 0:
+        if total_count % 3 == 0:
+            for [i, item] in enumerate(all_answers):
+                item["qsn_no"] = i + 1
+            print("percentage >>>>>>>>>", all_answers)
+            percentage = calculate_set_correctness(all_answers)
 
-            if percentage <= 40:
-                next_level = 1  # easy
-            elif percentage <= 60:
-                next_level = 2  # intermediate
+
+            if percentage <= 60:
+                if currentlevel == 1:
+                    next_level = 1  # intermediate or easy
+                else:
+                    next_level = currentlevel - 1
             else:
-                next_level = 3  # hard
+                if currentlevel == 3:
+                    next_level = 3  # hard
+                else:
+                    next_level = currentlevel + 1
         else:
             next_level = data.get('current_level', 2)
 
@@ -206,14 +232,14 @@ def submit_answer():
         next_question = get_next_question_by_level(data['topicid'], next_level, exclude_ids)
 
         if next_question:
+            question = random.choice(next_question)
+            question["question_count"] = config.QSN_COUNT
+            question["options"] = get_options_by_questionid(question["question_id"])
             return jsonify({
                 'success': True,
                 'status': 200,
                 'message': 'Here’s your next question!',
-                'response': {
-                    'levelid': next_level,
-                    'question': next_question
-                }
+                'response': question
             })
         else:
             return jsonify({
@@ -254,6 +280,26 @@ def calculate_set_correctness(answers):
     # Calculate percentage correctness for this set
     percentage = (correct_in_set / total_in_set) * 100 if total_in_set > 0 else 0
 
-    return set_number, total_in_set, percentage
+    return percentage
+
+# def calculate_set_correctness(answers):
+#     total_answered = len(answers)
+#     if total_answered == 0:
+#         return 0
+
+#     # Determine current set by index instead of qsn_no
+#     set_number = (total_answered - 1) // 3 + 1
+#     start_index = (set_number - 1) * 3
+#     end_index = set_number * 3
+
+#     # Slice based on list index
+#     current_set_answers = answers[start_index:end_index]
+
+#     total_in_set = len(current_set_answers)
+#     correct_in_set = sum(a['iscorrect'] for a in current_set_answers)
+
+#     percentage = (correct_in_set / total_in_set) * 100 if total_in_set > 0 else 0
+#     return percentage
+
 
 

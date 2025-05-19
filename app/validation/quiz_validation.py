@@ -15,11 +15,11 @@ def validate_quiz_attempt_data(data):
     return True
 
 def validate_start_quiz_data(data):
-    required_fields = ['userid', 'topicid']
+    required_fields = ['userid', 'topicid', 'attemptid']
     return all(field in data and data[field] for field in required_fields)
 
 def validate_submit_answer_data(data):
-    required_fields = ['userid', 'topicid', 'attemptid', 'questionid', 'optionid', 'attempted_questions', 'is_last']
+    required_fields = ['userid', 'topicid', 'attemptid', 'questionid', 'optionid', 'attempted_questions', 'is_last', 'current_level']
     return all(field in data and data[field] is not None for field in required_fields)
 
 

@@ -1,8 +1,9 @@
 from app.database.dbconnection import readQuery, writeQuery
+import config
 
 def fetch_all_topics():
     try:
-        query = "SELECT topic_id, name FROM mst_topics"
+        query = f"SELECT topic_id, name, description, image, {config.QSN_COUNT} AS total_qsn FROM mst_topics"
         result = readQuery(query, ())
         return result if result else []
     except Exception as e:
@@ -24,8 +25,22 @@ def create_attempt(data):
         params = (userid, topicid)
 
         # Insert and get last inserted id (attemptid)
-        attemptid = writeQuery(query, params)
+        attemptid = writeQuery(query, params).lastrowid
         return attemptid
+    except Exception as e:
+        print(f"Error in create_attempt: {e}")
+        return None
+    
+def check_attempt(data):
+    try:
+        query = """
+            SELECT attemptid, iscompleted FROM trn_attempts WHERE attemptid = %s 
+        """
+        params = (data["attemptid"])
+
+        # Insert and get last inserted id (attemptid)
+        attemptid = readQuery(query, params)
+        return attemptid[0]
     except Exception as e:
         print(f"Error in create_attempt: {e}")
         return None
@@ -58,9 +73,9 @@ def get_previous_performance(userid, topicid):
 def get_next_question_by_level(topicid, levelid, exclude_question_ids=None):
     try:
         query = """
-            SELECT question_id, question_text, level_id, topic_id, categoryid
-            FROM mst_questions
-            WHERE topic_id = %s AND level_id = %s
+            SELECT q.question_id, q.question_text, q.level_id, l.name AS levelname, q.topic_id, t.name AS topicname, q.categoryid, c.categoryname
+            FROM mst_questions q, mst_levels l, mst_categories c, mst_topics t
+            WHERE q.topic_id = %s AND q.level_id = %s AND q.level_id = l.level_id AND q.categoryid = c.categoryid AND q.topic_id = t.topic_id
         """
         params = [topicid, levelid]
 
@@ -77,11 +92,24 @@ def get_next_question_by_level(topicid, levelid, exclude_question_ids=None):
         print(f"Error in get_next_question_by_level: {e}")
         return None
     
+def get_options_by_questionid(questionid):
+    try:
+        query = """
+            SELECT option_id, option_text, option_label
+            FROM mst_options
+            WHERE question_id = %s
+        """
+        options = readQuery(query, (questionid,))
+        return options
+    except Exception as e:
+        print(f"Error in get_options_by_questionid: {e}")
+        return []
+    
 def get_option_correct_flag(optionid):
     try:
-        query = "SELECT iscorrect FROM options WHERE optionid = %s"
+        query = "SELECT is_correct FROM mst_options WHERE option_id = %s"
         result = readQuery(query, (optionid,))
-        return result[0]['iscorrect']
+        return result[0]['is_correct']
     except Exception as e:
         print(f"Error in get_option_correct_flag: {e}")
         return False
@@ -91,7 +119,7 @@ def store_user_answer(data):
     try:
         query = """
             INSERT INTO trn_answers (userid, attemptid, topicid, questionid, optionid, iscorrect)
-            VALUES (%s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s)
         """
         params = (data['userid'], data['attemptid'], data['topicid'], data['questionid'], data['optionid'], data["iscorrect"])
         return writeQuery(query, params)
@@ -101,7 +129,7 @@ def store_user_answer(data):
 
 def update_attempt_complete(attemptid):
     try:
-        query = "UPDATE trn_quiz_attempt SET iscompleted = 1 WHERE attemptid = %s"
+        query = "UPDATE trn_attempts SET iscompleted = 1 WHERE attemptid = %s"
         return writeQuery(query, (attemptid,))
     except Exception as e:
         print(f"Error updating attempt status: {e}")
@@ -128,11 +156,9 @@ def get_correct_answer_count(attemptid):
 def get_all_answers_for_attempt(attemptid):
     try:
         query = """
-            SELECT a.iscorrect, q.qsn_no
+            SELECT a.iscorrect, a.questionid, a.optionid
             FROM trn_answers a
-            JOIN questions q ON a.question_id = q.question_id
             WHERE a.attemptid = %s
-            ORDER BY q.qsn_no
         """
         return readQuery(query, (attemptid,))
     except Exception as e:
