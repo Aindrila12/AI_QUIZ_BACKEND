@@ -50,6 +50,7 @@ def check_user_consent(userid):
     try:
         query = "SELECT consent FROM trn_user_consent WHERE userid = %s AND consent = 1"
         result = readQuery(query, (userid))
+        print("result >>>>>>>>>", result)
         return bool(result)
     except Exception as e:
         print(f"Error in check_user_consent: {e}")
@@ -61,7 +62,7 @@ def get_previous_performance(userid, topicid):
             SELECT 
                 SUM(CASE WHEN iscorrect = 1 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS accuracy
             FROM trn_answers a
-            JOIN mst_questions q ON a.questionid = q.questionid
+            JOIN mst_questions q ON a.questionid = q.question_id
             WHERE a.userid = %s AND q.topic_id = %s
         """
         result = readQuery(query, (userid, topicid))
@@ -165,5 +166,37 @@ def get_all_answers_for_attempt(attemptid):
         print(f"Error in get_all_answers_for_attempt: {e}")
         return []
 
+
+def get_answers_by_attemptid(attemptid, topicid):
+    try:
+        query = "SELECT iscorrect, topicid FROM trn_answers WHERE attemptid = %s AND topicid = %s"
+        return readQuery(query, (attemptid, topicid))
+    except Exception as e:
+        print(f"Error in get_answers_by_attemptid: {e}")
+        return []
+
+def get_completed_attempts_by_user(userid, topicid):
+    try:
+        query = """
+            SELECT a.attemptid, a.createdat, t.name AS topicname, a.topicid FROM trn_attempts a, mst_topics t
+            WHERE a.userid = %s AND a.topicid = %s AND a.iscompleted = 1 AND a.topicid = t.topic_id ORDER BY a.createdat ASC
+        """
+        return readQuery(query, (userid, topicid))
+    except Exception as e:
+        print(f"Error in get_completed_attempts_by_user: {e}")
+        return []
+
+
+def save_user_consent(clientid, userid, consent):
+    try:
+        query = """
+            INSERT INTO trn_user_consent (clientid, userid, consent)
+            VALUES (%s, %s, %s)
+        """
+        writeQuery(query, (clientid, userid, consent))
+        return True
+    except Exception as e:
+        print("Database error:", e)
+        return False
 
 

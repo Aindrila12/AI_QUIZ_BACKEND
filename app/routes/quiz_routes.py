@@ -2,9 +2,23 @@ from flask import Blueprint, request, jsonify
 import random
 from app.dao.quiz_dao import *
 from app.validation.quiz_validation import *
+from app.utility.feedback_messages import *
 import config
 
+# ======== Prediction by model ========
+import joblib
+import numpy as np
+import pandas as pd
+# ======== Prediction by model ========
+
+# Load the saved file
+
 quiz_bp = Blueprint('quiz', __name__)
+
+# saved_objects_overall = joblib.load("models/feedback_model.pkl")
+# model = saved_objects_overall['model']
+# label_encoder = saved_objects_overall['label_encoder']
+# message_map = saved_objects_overall['message_map']
 
 # To fetch the topics
 @quiz_bp.route('/topics', methods=['POST'])
@@ -181,7 +195,6 @@ def submit_answer():
         
 
         # Step 3: Mark attempt as completed if last question
-        print("111111111111111", data.get('is_last'), data.get("is_last") == 0)
         if data.get('is_last'):
             if update_attempt_complete(data['attemptid']):
                 return jsonify({
@@ -204,13 +217,11 @@ def submit_answer():
         all_answers = get_all_answers_for_attempt(data['attemptid'])
         total_count = len(all_answers)
         next_level = 2  # default starting level
-        print(">>>>>>>>>>>>>>>>>>>>>>>>>", total_count, total_count % 3 == 0 )
         # Decide next level only after 4th, 7th, 10th... questions answered
         # if total_count >= 3 and (total_count - 4) % 3 == 0:
         if total_count % 3 == 0:
             for [i, item] in enumerate(all_answers):
                 item["qsn_no"] = i + 1
-            print("percentage >>>>>>>>>", all_answers)
             percentage = calculate_set_correctness(all_answers)
 
 
@@ -282,24 +293,166 @@ def calculate_set_correctness(answers):
 
     return percentage
 
-# def calculate_set_correctness(answers):
-#     total_answered = len(answers)
-#     if total_answered == 0:
-#         return 0
 
-#     # Determine current set by index instead of qsn_no
-#     set_number = (total_answered - 1) // 3 + 1
-#     start_index = (set_number - 1) * 3
-#     end_index = set_number * 3
 
-#     # Slice based on list index
-#     current_set_answers = answers[start_index:end_index]
+@quiz_bp.route('/get_summary', methods=['POST'])
+def get_summary():
+    try:
+        data = request.get_json()
+        attemptid = data.get('attemptid')
+        userid = data.get('userid')
+        topicid = data.get("topicid")  # Assuming all answers belong to same topic
 
-#     total_in_set = len(current_set_answers)
-#     correct_in_set = sum(a['iscorrect'] for a in current_set_answers)
+        if not validate_generate_score_data(data):
+            return jsonify({
+                'success': False,
+                'status': 400,
+                'message': 'Some fields are missing',
+                'response': None
+            })
 
-#     percentage = (correct_in_set / total_in_set) * 100 if total_in_set > 0 else 0
-#     return percentage
+        # 1. Get current score
+        answers = get_answers_by_attemptid(attemptid, topicid)
+        if not answers:
+            return jsonify({
+                'success': False,
+                'status': 404,
+                'message': 'No answers found for this attempt.',
+                'response': None
+            })
 
+        total = len(answers)
+        correct = sum(1 for ans in answers if ans['iscorrect'])
+        percentage = round((correct / total) * 100)
+
+        # 2. Generate feedback message
+        # feedback = get_feedback_message([percentage])
+
+        # 3. Get previous scores
+        previous_attempts = get_completed_attempts_by_user(userid, topicid)
+        previous_scores = []
+        previous_scores_obj = []
+        topicname = ''
+
+        if len(previous_attempts) > 0:
+            topicname = previous_attempts[0]["topicname"]
+            for row in previous_attempts:
+                past_answers = get_answers_by_attemptid(row['attemptid'], topicid)
+                if past_answers:
+                    total_prev = len(past_answers)
+                    correct_prev = sum(1 for ans in past_answers if ans['iscorrect'])
+                    score = round((correct_prev / total_prev) * 100)
+                    previous_scores.append(score)
+                    previous_scores_obj.append({
+                        "attemptdate": row['createdat'],
+                        "score": score
+                    })
+
+        # Get overall feddback by comparing previous scores
+        model = joblib.load('models/historical_performance_prediction.joblib')
+        feedbackmodel = joblib.load('models/predict_feedback.joblib')
+
+        # Predict on new scores
+        features = extract_features(previous_scores)
+        overall_feedback = model.predict([features])
+
+        # print("Predicted feedback:", overall_feedback[0])
+
+
+
+        # ========================= Current Feedback ===========================
+        pred_score = round(feedbackmodel.predict(pd.DataFrame({'percentage': [percentage]}))[0])
+        # print(f"Predicted score: {pred_score}")
+        pred_score = max(0, min(5, pred_score))  # Clamp
+        # print(f"Clamped score: {pred_score}")
+        current_feedback = random.choice(score_to_message[pred_score])
+
+        
+        # 4. Check consent
+        consent = check_user_consent(userid)
+
+        return jsonify({
+            'success': True,
+            'status': 200,
+            'message': 'Score and feedback generated successfully.',
+            'response': { 
+                'currentScore' : {
+                    'current_score': percentage,
+                    'current_feedback': current_feedback,
+                },               
+                'previousScores': {
+                    "overall_feedback": overall_feedback[0],
+                    "previous_scores": previous_scores_obj
+                    },
+                'consent': consent,
+                "topic_name": topicname
+            }
+        })
+    except Exception as e:
+        print("get_summary>>>>>>>>>>>>>>>", e)
+        return jsonify({
+            'success': False,
+            'status': 500,
+            'message': 'Something went wrong. Please try again later.',
+            'response': None
+        })
+    
+@quiz_bp.route("/submitConsent", methods=["POST"])
+def submit_consent():
+    try:
+        data = request.json
+        if not validate_consent_request(data):
+            return jsonify({
+                "status": "error",
+                "message": "Some fields are missing",
+                "response": None
+            }), 400
+
+        clientid = data['clientid']
+        userid = data['userid']
+        consent = data['consent']
+
+        result = save_user_consent(clientid, userid, consent)
+        if result:
+            return jsonify(
+                {
+                    'success': True,
+                    'status': 100,
+                    'message': 'Consent saved successfully',
+                    'response': None
+                }
+            )
+        else:
+            return jsonify(
+                {
+                    'success': False,
+                    'status': 500,
+                    'message': 'Failed to save consent',
+                    'response': None
+                }
+            )
+
+    except Exception as e:
+        print("submitConsent >>>>>>>>", e)
+        return jsonify({
+            'success': False,
+            'status': 500,
+            'message': 'Something went wrong. Please try again later.',
+            'response': None
+        })
+
+
+
+def extract_features(score_list):
+    arr = np.array(score_list)
+    x = np.arange(len(arr))
+    slope = np.polyfit(x, arr, 1)[0] if len(arr) > 1 else 0
+    return [
+        np.mean(arr),
+        np.std(arr),
+        np.min(arr),
+        np.max(arr),
+        slope
+    ]
 
 
