@@ -4,6 +4,7 @@ from app.dao.quiz_dao import *
 from app.validation.quiz_validation import *
 from app.utility.feedback_messages import *
 import config
+import pickle
 
 # ======== Prediction by model ========
 import joblib
@@ -349,12 +350,17 @@ def get_summary():
                     })
 
         # Get overall feddback by comparing previous scores
+        # model = joblib.load('models/historical_performance_prediction.joblib')
         model = joblib.load('models/historical_performance_prediction.joblib')
+        with open('models/label_to_messages.pkl', 'rb') as f:
+            label_to_messages = pickle.load(f)
         feedbackmodel = joblib.load('models/predict_feedback.joblib')
 
         # Predict on new scores
         features = extract_features(previous_scores)
-        overall_feedback = model.predict([features])
+        label_id = model.predict([features])[0]
+        overall_feedback = random.choice(label_to_messages[label_id])
+        # overall_feedback = model.predict([features])
 
         # print("Predicted feedback:", overall_feedback[0])
 
@@ -381,7 +387,7 @@ def get_summary():
                     'current_feedback': current_feedback,
                 },               
                 'previousScores': {
-                    "overall_feedback": overall_feedback[0],
+                    "overall_feedback": overall_feedback,
                     "previous_scores": previous_scores_obj
                     },
                 'consent': consent,
@@ -396,6 +402,8 @@ def get_summary():
             'message': 'Something went wrong. Please try again later.',
             'response': None
         })
+    
+
     
 @quiz_bp.route("/submitConsent", methods=["POST"])
 def submit_consent():
