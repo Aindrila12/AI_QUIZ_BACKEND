@@ -1,10 +1,10 @@
 from app.database.dbconnection import readQuery, writeQuery
 import config
 
-def fetch_all_topics():
+def fetch_all_topics(data):
     try:
-        query = f"SELECT topic_id, name, description, image, {config.QSN_COUNT} AS total_qsn FROM mst_topics"
-        result = readQuery(query, ())
+        query = f"SELECT topic_id, clientid, name, description, image, {config.QSN_COUNT} AS total_qsn FROM mst_topics WHERE clientid = %s"
+        result = readQuery(query, (data["clientid"]))
         return result if result else []
     except Exception as e:
         print(f"Error in fetch_all_topics: {e}")
@@ -178,8 +178,8 @@ def get_answers_by_attemptid(attemptid, topicid):
 def get_completed_attempts_by_user(userid, topicid):
     try:
         query = """
-            SELECT a.attemptid, a.createdat, t.name AS topicname, a.topicid FROM trn_attempts a, mst_topics t
-            WHERE a.userid = %s AND a.topicid = %s AND a.iscompleted = 1 AND a.topicid = t.topic_id ORDER BY a.createdat ASC
+            SELECT attemptid, createdat FROM trn_attempts
+            WHERE userid = %s AND topicid = %s AND iscompleted = 1 ORDER BY createdat ASC
         """
         return readQuery(query, (userid, topicid))
     except Exception as e:
@@ -195,6 +195,20 @@ def save_user_consent(clientid, userid, consent):
         """
         writeQuery(query, (clientid, userid, consent))
         return True
+    except Exception as e:
+        print("Database error:", e)
+        return False
+    
+def get_topic_name(topicid):
+    try:
+        query = """
+            SELECT name FROM mst_topics WHERE topic_id = %s
+        """
+        result = readQuery(query, (topicid))
+        if len(result) > 0:
+            return result[0]['name']
+        else:
+            return None
     except Exception as e:
         print("Database error:", e)
         return False

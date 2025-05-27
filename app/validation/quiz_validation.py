@@ -1,5 +1,12 @@
 # app/validation/quiz_validation.py
 
+def validate_topic_data(data):
+    required_fields = ['clientid']
+    for field in required_fields:
+        if not data.get(field):
+            return False
+    return True
+
 def validate_start_quiz_data(data):
     required_fields = ['user_id', 'topic_id']
     for field in required_fields:

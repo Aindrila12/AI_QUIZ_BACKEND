@@ -1,7 +1,7 @@
 # app/routes/auth_routes.py
 
 from flask import Blueprint, request, jsonify
-from app.dao.user_dao import get_user_by_credentials
+from app.dao.user_dao import *
 from app.validation.auth_validation import validate_login_data
 import bcrypt
 
@@ -23,12 +23,24 @@ def login():
         if result:
             if bcrypt.checkpw(data["password"].encode('utf-8'), result["password"].encode('utf-8')):
                 del result["password"]
-                return jsonify({
-                    'success': True,
-                    "status": 200,
-                    'message': 'Logged in successfully!',
-                    'response': result
-                })
+                clientdtl = get_client_detail(result["clientid"])
+                if clientdtl:
+                    return jsonify({
+                        'success': True,
+                        "status": 200,
+                        'message': 'Logged in successfully!',
+                        'response': {
+                            "userdetails": result,
+                            "clientdetails": clientdtl
+                        }
+                    })
+                else:
+                    return jsonify({
+                        'success': False,
+                        "status": 401,
+                        'message': 'No client found.',
+                        'response': None
+                    })
             else:
                 return jsonify({
                     'success': False,

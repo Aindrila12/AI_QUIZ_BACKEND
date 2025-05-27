@@ -25,7 +25,15 @@ quiz_bp = Blueprint('quiz', __name__)
 @quiz_bp.route('/topics', methods=['POST'])
 def topics():
     try:
-        topics = fetch_all_topics()
+        data = request.json
+        if not validate_topic_data(data):
+            return jsonify({
+                'success': False,
+                'status': 400,
+                'message': 'Every fields are required to start.',
+                'response': None
+            })
+        topics = fetch_all_topics(data)
         if topics:
             return jsonify({
                 'success': True,
@@ -330,43 +338,47 @@ def get_summary():
         # feedback = get_feedback_message([percentage])
 
         # 3. Get previous scores
-        previous_attempts = get_completed_attempts_by_user(userid, topicid)
         previous_scores = []
         previous_scores_obj = []
-        topicname = ''
+        overall_feedback = ''
+        consent = check_user_consent(userid)
+        topicname = get_topic_name(topicid)
 
-        if len(previous_attempts) > 0:
-            topicname = previous_attempts[0]["topicname"]
-            for row in previous_attempts:
-                past_answers = get_answers_by_attemptid(row['attemptid'], topicid)
-                if past_answers:
-                    total_prev = len(past_answers)
-                    correct_prev = sum(1 for ans in past_answers if ans['iscorrect'])
-                    score = round((correct_prev / total_prev) * 100)
-                    previous_scores.append(score)
-                    previous_scores_obj.append({
-                        "attemptdate": row['createdat'],
-                        "score": score
-                    })
 
-        # Get overall feddback by comparing previous scores
-        # model = joblib.load('models/historical_performance_prediction.joblib')
-        model = joblib.load('models/historical_performance_prediction.joblib')
-        with open('models/label_to_messages.pkl', 'rb') as f:
-            label_to_messages = pickle.load(f)
-        feedbackmodel = joblib.load('models/predict_feedback.joblib')
+        if consent:
+            previous_attempts = get_completed_attempts_by_user(userid, topicid)
 
-        # Predict on new scores
-        features = extract_features(previous_scores)
-        label_id = model.predict([features])[0]
-        overall_feedback = random.choice(label_to_messages[label_id])
-        # overall_feedback = model.predict([features])
+            if len(previous_attempts) > 0:
+                for row in previous_attempts:
+                    past_answers = get_answers_by_attemptid(row['attemptid'], topicid)
+                    if past_answers:
+                        total_prev = len(past_answers)
+                        correct_prev = sum(1 for ans in past_answers if ans['iscorrect'])
+                        score = round((correct_prev / total_prev) * 100)
+                        previous_scores.append(score)
+                        previous_scores_obj.append({
+                            "attemptdate": row['createdat'],
+                            "score": score
+                        })
 
-        # print("Predicted feedback:", overall_feedback[0])
+            # Get overall feddback by comparing previous scores
+            # model = joblib.load('models/historical_performance_prediction.joblib')
+            model = joblib.load('models/historical_performance_prediction.joblib')
+            with open('models/label_to_messages.pkl', 'rb') as f:
+                label_to_messages = pickle.load(f)
+
+            # Predict on new scores
+            features = extract_features(previous_scores)
+            label_id = model.predict([features])[0]
+            overall_feedback = random.choice(label_to_messages[label_id])
+            # overall_feedback = model.predict([features])
+
+            # print("Predicted feedback:", overall_feedback[0])
 
 
 
         # ========================= Current Feedback ===========================
+        feedbackmodel = joblib.load('models/predict_feedback.joblib')
         pred_score = round(feedbackmodel.predict(pd.DataFrame({'percentage': [percentage]}))[0])
         # print(f"Predicted score: {pred_score}")
         pred_score = max(0, min(5, pred_score))  # Clamp
@@ -375,7 +387,6 @@ def get_summary():
 
         
         # 4. Check consent
-        consent = check_user_consent(userid)
 
         return jsonify({
             'success': True,
