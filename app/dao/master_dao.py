@@ -118,3 +118,12 @@ def update_topic_data(data):
     except Exception as e:
         print(f"Error in update_topic_data: {e}")
         return False
+    
+def get_topic_details(data):
+    try:
+        query = "SELECT * FROM mst_topics  WHERE topic_id = %s AND clientid = %s"
+        result = readQuery(query, ( data["topicid"], data["clientid"]))
+        return result[0] if result else {};
+    except Exception as e:
+        print(f"Error in update_topic_data: {e}")
+        return False

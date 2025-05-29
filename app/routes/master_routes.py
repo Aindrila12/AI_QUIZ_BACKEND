@@ -10,6 +10,7 @@ import os
 
 master_bp = Blueprint('master', __name__)
 
+
 @master_bp.route('/topic_sample_excel', methods=['POST'])
 def topic_sample_excel():
     try:
@@ -64,12 +65,11 @@ def topic_sample_excel():
             'message': 'Error generating Excel file.',
             'response': str(e)
         })
-    
+
 
 @master_bp.route('/question_sample_excel', methods=['POST'])
 def question_sample_excel():
     try:
-        # Optional: Validate the incoming JSON if required
         data = request.json
         if not validate_category_sample_excel(data):
             return jsonify({
@@ -79,57 +79,75 @@ def question_sample_excel():
                 'response': None
             })
 
-        # Create workbook
         wb = Workbook()
         ws = wb.active
         ws.title = "Questions"
 
         # Define headers
         headers = [
-            "Question", 
-            "Question Type", 
-            "Descriptive Answer", 
-            "Options", 
-            "Correct Answer"
+            "Question",
+            "Question Type",
+            "Descriptive Answer",
+            "Options",
+            "Correct Answer",
+            "Level"  # New column
         ]
         ws.append(headers)
 
         # Set column widths
-        column_widths = [50, 20, 40, 40, 20]
+        column_widths = [50, 20, 40, 40, 20, 20]
         for i, width in enumerate(column_widths, start=1):
             ws.column_dimensions[chr(64 + i)].width = width
 
         # Add sample rows
         ws.append([
-            "What is the capital of France?", 
-            "MCQ", 
-            "", 
-            "Paris,London,Berlin", 
-            "A"
+            "What is the capital of France?",
+            "MCQ",
+            "",
+            "Paris|London|Berlin",
+            "Paris",
+            "Easy"
         ])
         ws.append([
-            "Explain the process of photosynthesis.", 
-            "Descriptive", 
-            "Photosynthesis is the process by which green plants convert sunlight into energy...", 
-            "", 
-            ""
+            "Explain the process of photosynthesis.",
+            "Descriptive",
+            "Photosynthesis is the process by which green plants convert sunlight into energy...",
+            "",
+            "",
+            "Intermediate"
         ])
 
-        # Add dropdown for Question Type
-        dv = DataValidation(
-            type="list", 
+        # Dropdown for Question Type (MCQ, Descriptive)
+        dv_qtype = DataValidation(
+            type="list",
             formula1='"MCQ,Descriptive"',
             allow_blank=False
         )
-        dv.prompt = "Select the question type"
-        dv.promptTitle = "Question Type"
-        dv.error = "Invalid question type. Choose from MCQ or Descriptive."
-        dv.errorTitle = "Invalid Selection"
-        ws.add_data_validation(dv)
+        dv_qtype.prompt = "Select the question type"
+        dv_qtype.promptTitle = "Question Type"
+        dv_qtype.error = "Invalid question type. Choose from MCQ or Descriptive."
+        dv_qtype.errorTitle = "Invalid Selection"
+        ws.add_data_validation(dv_qtype)
 
         # Apply dropdown to Question Type column (B2 to B11)
-        for row in range(2, 12):  # First 10 input rows
-            dv.add(ws[f"B{row}"])
+        for row in range(2, 12):
+            dv_qtype.add(ws[f"B{row}"])
+
+        # Dropdown for Level (Easy, Intermediate, Hard)
+        dv_level = DataValidation(
+            type="list",
+            formula1='"Easy,Intermediate,Hard"',
+            allow_blank=False
+        )
+        dv_level.prompt = "Select difficulty level"
+        dv_level.promptTitle = "Level"
+        dv_level.error = "Invalid level. Choose from Easy, Intermediate, Hard."
+        dv_level.errorTitle = "Invalid Selection"
+        ws.add_data_validation(dv_level)
+
+        # Apply dropdown to Level column (F2 to F11)
+        for row in range(2, 12):
+            dv_level.add(ws[f"F{row}"])
 
         # Save file
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -156,8 +174,8 @@ def question_sample_excel():
 
 
 
-
 @master_bp.route('/upload_topics_excel', methods=['POST'])
+
 def upload_topics_excel():
     try:
         # Get clientid from the form data
@@ -168,7 +186,7 @@ def upload_topics_excel():
                 'message': 'Invalid request. Please check the uploaded file and required fields.',
                 'response': None
             })
-        
+
         clientid = request.form.get('clientid')
         file = request.files['file']
 
@@ -202,7 +220,6 @@ def upload_topics_excel():
             else:
                 valid_data.append(row_data)
 
-
         total = len(all_rows)
         valid = len(valid_data)
         valid_percent = (valid / total) * 100 if total > 0 else 0
@@ -225,14 +242,12 @@ def upload_topics_excel():
                 'message': f"All {valid} topics inserted successfully.",
                 'response': None
             })
-        
 
         # Create error-highlighted Excel
         error_filename = f"topic_upload_errors_{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
         error_filepath = os.path.join(os.getcwd(), 'public', 'downloads')
         os.makedirs(error_filepath, exist_ok=True)
         full_error_path = os.path.join(error_filepath, error_filename)
-
 
         error_wb = Workbook()
         error_ws = error_wb.active
@@ -244,10 +259,12 @@ def upload_topics_excel():
         error_ws.column_dimensions['C'].width = 40  # Categories
         error_ws.column_dimensions['D'].width = 60  # Reason
 
-        red_fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
+        red_fill = PatternFill(start_color='FFC7CE',
+                               end_color='FFC7CE', fill_type='solid')
 
         for i, (idx, data, errs) in enumerate(all_rows, start=2):
-            row = [data['topic_name'], data['description'], ", ".join(data['categories']), ", ".join(errs) if errs else ""]
+            row = [data['topic_name'], data['description'], ", ".join(
+                data['categories']), ", ".join(errs) if errs else ""]
             error_ws.append(row)
             if errs:
                 for col in range(1, 4):
@@ -256,7 +273,8 @@ def upload_topics_excel():
         error_wb.save(full_error_path)
 
         # Log error file
-        insert_error_log({"type": "topic", "filename": error_filename}, clientid)
+        insert_error_log(
+            {"type": "topic", "filename": error_filename}, clientid)
 
         if valid_percent >= 80:
             for item in valid_data:
@@ -295,7 +313,7 @@ def topics():
                 'message': 'Every field is required to start.',
                 'response': None
             })
-        
+
         clientid = data.get('clientid')
 
         topics = fetch_all_topics(data)
@@ -311,7 +329,8 @@ def topics():
         category_rows = get_categories(clientid)
 
         # Build topicid -> categories mapping
-        topic_categories_map = {row['topicid']: row['categories'] for row in category_rows}
+        topic_categories_map = {
+            row['topicid']: row['categories'] for row in category_rows}
 
         # Merge categories into each topic
         for topic in topics:
@@ -333,7 +352,8 @@ def topics():
             'message': 'Something went wrong. Please try again later.',
             'response': None
         })
-    
+
+
 @master_bp.route('/update_topic', methods=['POST'])
 def update_topic():
     try:
@@ -370,7 +390,46 @@ def update_topic():
             'message': 'Something went wrong. Please try again later.',
             'response': None
         })
-    
+
+
+@master_bp.route('/topic_details', methods=['POST'])
+def topic_details():
+    try:
+        data = request.json
+        if not validate_topic_details(data):
+            return jsonify({
+                'success': False,
+                'status': 400,
+                'message': 'Every field is required to update.',
+                'response': None
+            })
+
+        result = get_topic_details(data)
+        if not result:
+            return jsonify({
+                'success': False,
+                'status': 500,
+                'message': 'Couldn’t fetch. Please try again soon.',
+                'response': None
+            })
+
+        return jsonify({
+            'success': True,
+            'status': 200,
+            'message': 'Fetched successfully.',
+            'response': result
+        })
+
+    except Exception as e:
+        print(f"Error in /topics: {e}")
+        return jsonify({
+            'success': False,
+            'status': 500,
+            'message': 'Something went wrong. Please try again later.',
+            'response': None
+        })
+
+
 @master_bp.route('/questions', methods=['POST'])
 def questions():
     try:

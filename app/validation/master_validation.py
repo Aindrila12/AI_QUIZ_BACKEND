@@ -44,3 +44,10 @@ def validate_excel_upload_request(request, allowed_extensions=('.xlsx',)):
             errors.append("Invalid file format. Only .xlsx is allowed.")
 
     return errors
+
+def validate_topic_details(data):
+    required_fields = ['clientid', 'topicid']
+    for field in required_fields:
+        if not data.get(field):
+            return False
+    return True
