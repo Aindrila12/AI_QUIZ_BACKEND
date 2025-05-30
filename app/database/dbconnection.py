@@ -8,7 +8,7 @@ def create_connection():
         connection = pymysql.connect(
             host='localhost',            # Change if your MySQL server is hosted elsewhere
             user='root',        # Replace with your MySQL username
-            password='password',    # Replace with your MySQL password
+            password='sneha@123',    # Replace with your MySQL password
             database= 'ai_quiz'        # Replace with your database name
         )
     except OperationalError as e:

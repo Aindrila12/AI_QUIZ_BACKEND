@@ -3,9 +3,11 @@ from openpyxl import Workbook
 from datetime import datetime
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl import load_workbook
+from werkzeug.utils import secure_filename
 from openpyxl.styles import PatternFill
 from app.validation.master_validation import *
 from app.dao.master_dao import *
+from app.dao.quiz_dao import fetch_all_topics as quiz_all_topics
 import os
 
 master_bp = Blueprint('master', __name__)
@@ -79,77 +81,94 @@ def question_sample_excel():
                 'response': None
             })
 
+        topics = quiz_all_topics(data)
+        if len(topics) == 0:
+            return jsonify({
+                'success': False,
+                'status': 500,
+                'message': 'No topics found. Please add topics first.',
+                'response': None
+            })
+
+        levels = fetch_levels(data)
+        if len(levels) == 0:
+            return jsonify({
+                'success': False,
+                'status': 500,
+                'message': 'No levels found. Please add levels first.',
+                'response': None
+            })
+
+        categories = get_all_categories(data)
+
         wb = Workbook()
         ws = wb.active
         ws.title = "Questions"
 
         # Define headers
         headers = [
-            "Question",
-            "Question Type",
-            "Descriptive Answer",
-            "Options",
-            "Correct Answer",
-            "Level"  # New column
+            "Question", "Question Type", "Descriptive Answer",
+            "Options", "Correct Answer", "Level",
+            "Topic Name", "Category"
         ]
         ws.append(headers)
 
         # Set column widths
-        column_widths = [50, 20, 40, 40, 20, 20]
+        column_widths = [20, 20, 20, 20, 20, 20, 25, 25]
         for i, width in enumerate(column_widths, start=1):
             ws.column_dimensions[chr(64 + i)].width = width
 
-        # Add sample rows
+        # Sample data
         ws.append([
-            "What is the capital of France?",
-            "MCQ",
-            "",
-            "Paris|London|Berlin",
-            "Paris",
-            "Easy"
+            "What is the capital of France?", "MCQ", "",
+            "Paris,London,Berlin", "Paris", levels[0]["name"],
+            topics[0]["name"], ""
         ])
         ws.append([
-            "Explain the process of photosynthesis.",
-            "Descriptive",
-            "Photosynthesis is the process by which green plants convert sunlight into energy...",
-            "",
-            "",
-            "Intermediate"
+            "Explain the process of photosynthesis.", "Descriptive",
+            "Photosynthesis is the process...", "", "",
+            levels[0]["name"], topics[0]["name"], ""
         ])
 
-        # Dropdown for Question Type (MCQ, Descriptive)
-        dv_qtype = DataValidation(
-            type="list",
-            formula1='"MCQ,Descriptive"',
-            allow_blank=False
-        )
-        dv_qtype.prompt = "Select the question type"
-        dv_qtype.promptTitle = "Question Type"
-        dv_qtype.error = "Invalid question type. Choose from MCQ or Descriptive."
-        dv_qtype.errorTitle = "Invalid Selection"
+        # Create hidden sheet with lists
+        hidden = wb.create_sheet(title="Lists")
+        hidden.sheet_state = 'hidden'
+
+        # Fill values
+        topic_names = list(set([t['name'] for t in topics])) if topics else []
+        category_names = list(set([c['categoryname'] for c in categories])) if categories else []
+        level_names = list(set([l['name'] for l in levels])) if levels else []
+
+        for idx, name in enumerate(topic_names, start=1):
+            hidden.cell(row=idx, column=1, value=name)
+        for idx, name in enumerate(category_names, start=1):
+            hidden.cell(row=idx, column=2, value=name)
+        for idx, name in enumerate(level_names, start=1):
+            hidden.cell(row=idx, column=3, value=name)
+
+        # Named ranges
+        wb.create_named_range('TopicList', hidden, f"$A$1:$A${len(topic_names)}")
+        wb.create_named_range('CategoryList', hidden, f"$B$1:$B${len(category_names)}")
+        wb.create_named_range('LevelList', hidden, f"$C$1:$C${len(level_names)}")
+
+        # Data Validations
+        dv_qtype = DataValidation(type="list", formula1='"MCQ,Descriptive"', allow_blank=False)
+        dv_level = DataValidation(type="list", formula1='=LevelList', allow_blank=False)
+        dv_topic = DataValidation(type="list", formula1='=TopicList', allow_blank=False)
+        dv_category = DataValidation(type="list", formula1='=CategoryList', allow_blank=False)
+
+        # Add validations
         ws.add_data_validation(dv_qtype)
-
-        # Apply dropdown to Question Type column (B2 to B11)
-        for row in range(2, 12):
-            dv_qtype.add(ws[f"B{row}"])
-
-        # Dropdown for Level (Easy, Intermediate, Hard)
-        dv_level = DataValidation(
-            type="list",
-            formula1='"Easy,Intermediate,Hard"',
-            allow_blank=False
-        )
-        dv_level.prompt = "Select difficulty level"
-        dv_level.promptTitle = "Level"
-        dv_level.error = "Invalid level. Choose from Easy, Intermediate, Hard."
-        dv_level.errorTitle = "Invalid Selection"
         ws.add_data_validation(dv_level)
+        ws.add_data_validation(dv_topic)
 
-        # Apply dropdown to Level column (F2 to F11)
-        for row in range(2, 12):
+        for row in range(2, 12):  # Example: Apply to first 10 rows
+            dv_qtype.add(ws[f"B{row}"])
             dv_level.add(ws[f"F{row}"])
+            dv_topic.add(ws[f"G{row}"])
+            dv_category.add(ws[f"H{row}"])
 
-        # Save file
+        # Save
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         filename = f"question_sample_{timestamp}.xlsx"
         save_path = os.path.join(os.getcwd(), "public", "downloads")
@@ -171,6 +190,228 @@ def question_sample_excel():
             'message': 'Error generating Excel file.',
             'response': str(e)
         })
+    
+@master_bp.route('/user_sample_excel', methods=['POST'])
+def user_sample_excel():
+    try:
+        data = request.json
+        if not validate_category_sample_excel(data):
+            return jsonify({
+                'success': False,
+                'status': 1001,
+                'message': 'Some fields are missing.',
+                'response': None
+            })
+
+        # Create workbook and worksheet
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Users"
+
+        # Define headers
+        headers = ["Name", "Email", "Username"]
+        ws.append(headers)
+
+        # Set column widths
+        column_widths = [25, 35, 25]
+        for i, width in enumerate(column_widths, start=1):
+            ws.column_dimensions[chr(64 + i)].width = width
+
+        # Add sample data
+        sample_users = [
+            ["John Doe", "john.doe@example.com", "john.doe@example.com"],
+            ["Jane Smith", "jane.smith@example.com", "jane.smith@example.com"]
+        ]
+        for row in sample_users:
+            ws.append(row)
+
+        # Align center
+        # for row in ws.iter_rows(min_row=2, max_col=3, max_row=3):
+        #     for cell in row:
+        #         cell.alignment = Alignment(horizontal="left")
+
+        # Save file
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        filename = f"user_sample_{timestamp}.xlsx"
+        save_path = os.path.join(os.getcwd(), "public", "downloads")
+        os.makedirs(save_path, exist_ok=True)
+        full_path = os.path.join(save_path, filename)
+        wb.save(full_path)
+
+        return jsonify({
+            'success': True,
+            'status': 200,
+            'message': 'User sample Excel generated successfully.',
+            'response': {"filename": filename}
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'status': 500,
+            'message': 'Error generating user Excel file.',
+            'response': str(e)
+        })
+    
+
+@master_bp.route('/upload_question_excel', methods=['POST'])
+def upload_question_excel():
+    try:
+        if not validate_excel_upload_request(request, '.xlsx'):
+            return jsonify({
+                'success': False,
+                'status': 1001,
+                'message': 'Invalid request. Please check the uploaded file and required fields.',
+                'response': None
+            })
+
+        clientid = request.form.get('clientid')
+        file = request.files['file']
+        wb = load_workbook(file)
+        ws = wb.active
+
+        # Fetch reference mappings
+        topics = {t['name']: t['topic_id'] for t in quiz_all_topics({'clientid': clientid})}
+        levels = {l['name']: l['level_id'] for l in fetch_levels({'clientid': clientid})}
+        categories = {c['categoryname']: c['categoryid'] for c in get_all_categories({'clientid': clientid})}
+
+        allowed_qtypes = ['MCQ', 'Descriptive']
+
+        errors = []
+        valid_data = []
+        all_rows = []  # Will store (row_index, row_data_dict, errors_list)
+
+        for idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+            question, qtype, desc_ans, options, correct_ans, level_name, topic_name, category_name = row
+            row_errors = []
+
+            # Validate required fields
+            if not question or not qtype or not level_name or not topic_name:
+                row_errors.append("Question, Question Type, Level, and Topic are required.")
+            
+            # Validate dropdown values
+            if qtype and qtype not in allowed_qtypes:
+                row_errors.append("Invalid Question Type. Must be MCQ or Descriptive.")
+            if level_name and level_name not in levels:
+                row_errors.append(f"Invalid Level: '{level_name}'. Must be selected from dropdown.")
+            if topic_name and topic_name not in topics:
+                row_errors.append(f"Invalid Topic: '{topic_name}'. Must be selected from dropdown.")
+            if category_name and category_name not in categories:
+                row_errors.append(f"Invalid Category: '{category_name}'. Must be selected from dropdown or left blank.")
+
+            # Additional logic checks
+            if qtype == 'MCQ':
+                if not options or not correct_ans:
+                    row_errors.append("MCQ must have Options and Correct Answer.")
+            elif qtype == 'Descriptive':
+                if not desc_ans:
+                    row_errors.append("Descriptive questions must have an answer.")
+
+            row_data = {
+                'clientid': int(clientid),
+                'question': str(question).strip() if question else '',
+                'question_type': 1 if qtype == 'MCQ' else 2 if qtype == 'Descriptive' else None,
+                'descriptive_answer': str(desc_ans).strip() if desc_ans else '',
+                'options': [opt.strip() for opt in str(options).split(",")] if options else [],
+                'correct_answer': str(correct_ans).strip() if correct_ans else '',
+                'level_id': levels.get(level_name),
+                'topic_id': topics.get(topic_name),
+                'category_id': categories.get(category_name) if category_name else None
+            }
+
+            all_rows.append((idx, row_data, row_errors))
+
+            if row_errors:
+                errors.append({'row': idx, 'errors': row_errors})
+            else:
+                valid_data.append(row_data)
+
+        total = len(all_rows)
+        valid = len(valid_data)
+        valid_percent = (valid / total) * 100 if total > 0 else 0
+
+        # If all valid, insert directly
+        if valid == total:
+            for item in valid_data:
+                insert_question(item)
+            return jsonify({
+                'success': True,
+                'status': 200,
+                'message': f"All {valid} questions inserted successfully.",
+                'response': None
+            })
+
+        # Create error-highlighted Excel file with all rows + reason column
+        error_filename = f"question_upload_errors_{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
+        error_filepath = os.path.join(os.getcwd(), 'public', 'downloads')
+        os.makedirs(error_filepath, exist_ok=True)
+        full_error_path = os.path.join(error_filepath, error_filename)
+
+        error_wb = Workbook()
+        error_ws = error_wb.active
+        error_ws.append([
+            "Question", "Question Type", "Descriptive Answer",
+            "Options", "Correct Answer", "Level",
+            "Topic", "Category", "Reason"
+        ])
+
+        # Column widths for better readability
+        col_widths = [30, 15, 30, 40, 20, 15, 25, 25, 50]
+        for i, width in enumerate(col_widths, start=1):
+            error_ws.column_dimensions[chr(64 + i)].width = width
+
+        red_fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
+
+        # Write rows with errors highlighted
+        for i, (row_num, data, errs) in enumerate(all_rows, start=2):
+            row = [
+                data['question'],
+                'MCQ' if data['question_type'] == 1 else 'Descriptive' if data['question_type'] == 2 else '',
+                data['descriptive_answer'],
+                ", ".join(data['options']) if data['options'] else '',
+                data['correct_answer'],
+                next((k for k,v in levels.items() if v == data['level_id']), ''),
+                next((k for k,v in topics.items() if v == data['topic_id']), ''),
+                next((k for k,v in categories.items() if v == data['category_id']), '') if data['category_id'] else '',
+                ", ".join(errs) if errs else ""
+            ]
+            error_ws.append(row)
+            if errs:
+                for col in range(1, 10):  # Highlight columns A to I
+                    error_ws.cell(row=i, column=col).fill = red_fill
+
+        error_wb.save(full_error_path)
+
+        # Optionally log the error file somewhere
+        insert_error_log({"type": "question", "filename": error_filename}, clientid)
+
+        # Insert valid rows if >= 80%
+        if valid_percent >= 80:
+            for item in valid_data:
+                insert_question(item)
+            return jsonify({
+                'success': True,
+                'status': 200,
+                'message': f"{valid} out of {total} questions inserted. Errors logged in file.",
+                'response': {'error_file': error_filename}
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'status': 500,
+                'message': "Less than 80% of rows are valid. No data inserted.",
+                'response': {'error_file': error_filename}
+            })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'status': 500,
+            'message': 'Error processing the Excel file.',
+            'response': str(e)
+        })
+
+
 
 
 
@@ -300,6 +541,136 @@ def upload_topics_excel():
             'message': 'Error processing file.',
             'response': str(e)
         })
+    
+@master_bp.route('/upload_users', methods=['POST'])
+def upload_users():
+    try:
+        if not validate_excel_upload_request(request, '.xlsx'):
+            return jsonify({
+                'success': False,
+                'status': 1001,
+                'message': 'Invalid request. Please check the uploaded file and required fields.',
+                'response': None
+            })
+
+        clientid = request.form.get('clientid')
+        file = request.files['file']
+
+        wb = load_workbook(file)
+        ws = wb.active
+
+        headers = [cell.value for cell in ws[1]]
+        expected_headers = ["Name", "Email", "Username"]
+        if headers != expected_headers:
+            return jsonify({
+                'success': False,
+                'status': 400,
+                'message': f'Invalid Excel format. Expected headers: {expected_headers}.',
+                'response': None
+            })
+
+        errors = []
+        valid_data = []
+        all_rows = []
+
+        for idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+            name, email, username = row
+            row_errors = []
+
+            if not name or not str(name).strip():
+                row_errors.append("Name is required.")
+            if not email or not str(email).strip():
+                row_errors.append("Email is required.")
+            if not username or not str(username).strip():
+                row_errors.append("Username is required.")
+
+            row_data = {
+                'clientid': int(clientid),
+                'name': str(name).strip() if name else '',
+                'email': str(email).strip() if email else '',
+                'username': str(username).strip() if username else '',
+                'password': 'password123',  # Consider hashing
+                'usertype': 3,
+                'isactive': 1,
+                'isdeleted': 0,
+                'createdat': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+
+            all_rows.append((idx, row_data, row_errors))
+
+            if row_errors:
+                errors.append({'row': idx, 'errors': row_errors})
+            else:
+                valid_data.append(row_data)
+
+        total = len(all_rows)
+        valid = len(valid_data)
+        valid_percent = (valid / total) * 100 if total > 0 else 0
+
+        # Generate error Excel file
+        error_filename = f"user_upload_errors_{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
+        error_filepath = os.path.join(os.getcwd(), 'public', 'downloads')
+        os.makedirs(error_filepath, exist_ok=True)
+        full_error_path = os.path.join(error_filepath, error_filename)
+
+        error_wb = Workbook()
+        error_ws = error_wb.active
+        error_ws.append(["Name", "Email", "Username", "Reason"])
+
+        # Set column widths
+        error_ws.column_dimensions['A'].width = 30
+        error_ws.column_dimensions['B'].width = 30
+        error_ws.column_dimensions['C'].width = 30
+        error_ws.column_dimensions['D'].width = 60
+
+        red_fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
+
+        for i, (idx, data, errs) in enumerate(all_rows, start=2):
+            row = [data['name'], data['email'], data['username'], ", ".join(errs)]
+            error_ws.append(row)
+            if errs:
+                for col in range(1, 4):
+                    error_ws.cell(row=i, column=col).fill = red_fill
+
+        error_wb.save(full_error_path)
+
+        # Log error file
+        insert_error_log({"type": "user", "filename": error_filename}, clientid)
+
+        # Insert if valid ≥ 80%
+        if valid_percent >= 80:
+            insert_values = []
+            for data in valid_data:
+                insert_values.append((
+                    clientid, data['email'], data['name'], data['username'], data['password'],
+                    None, data['usertype'], data['isactive'], data['isdeleted'], data['createdat']
+                ))
+
+            insert_users(insert_values, clientid)
+
+            return jsonify({
+                'success': True,
+                'status': 200,
+                'message': f"{valid} out of {total} users inserted. Errors logged in file.",
+                'response': {'error_file': error_filename}
+            })
+
+        else:
+            return jsonify({
+                'success': False,
+                'status': 500,
+                'message': f"Less than 80% valid rows. No data inserted.",
+                'response': {'error_file': error_filename}
+            })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'status': 500,
+            'message': 'Upload failed.',
+            'response': str(e)
+        })
+
 
 
 @master_bp.route('/topics', methods=['POST'])

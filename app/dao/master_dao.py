@@ -123,7 +123,117 @@ def get_topic_details(data):
     try:
         query = "SELECT * FROM mst_topics  WHERE topic_id = %s AND clientid = %s"
         result = readQuery(query, ( data["topicid"], data["clientid"]))
-        return result[0] if result else {};
+        return result[0] if result else {}
     except Exception as e:
         print(f"Error in update_topic_data: {e}")
         return False
+    
+def fetch_levels(data):
+    try:
+        query = "SELECT level_id, name FROM mst_levels WHERE clientid = %s"
+        result = readQuery(query, (data["clientid"]))
+        return result
+    except Exception as e:
+        print(f"Error in fetch_levels: {e}")
+        return False
+    
+def get_all_categories(data):
+    try:
+        query = "SELECT categoryid, categoryname FROM mst_categories  WHERE clientid = %s"
+        result = readQuery(query, (data["clientid"]))
+        return result
+    except Exception as e:
+        print(f"Error in fetch_levels: {e}")
+        return False
+    
+def insert_question(data):
+    try:
+        # Insert question
+        question_query = """
+            INSERT INTO mst_questions 
+            (clientid, topic_id, categoryid, level_id, question_text, questiontype, descriptiveanswer)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """
+        question_params = (
+            data['clientid'],
+            data.get('topic_id'),
+            data.get('category_id', 0),
+            data.get('level_id'),
+            data['question_text'],
+            data['question_type'],
+            data.get('descriptive_answer', '')
+        )
+
+        question_id = writeQuery(question_query, question_params).lastrowid
+
+        if not question_id:
+            return False
+
+        # If MCQ, insert options
+        if data['question_type'] == 1:
+            insert_option(data, question_id)
+
+        return question_id
+
+    except Exception as e:
+        print(f"Error in insert_question_with_options: {e}")
+        return False
+
+def insert_option(data, question_id):
+        try:
+            options = data.get('options', [])
+            correct_answer = data.get('correct_answer', '')
+
+
+            cleaned_options = [opt.strip() for opt in options if opt.strip()]
+            if cleaned_options:
+                placeholders = ", ".join(["(%s, %s, %s, %s, %s)"] * len(cleaned_options))
+                option_query = f"""
+                    INSERT INTO mst_options 
+                    (clientid, question_id, option_label, option_text, is_correct)
+                    VALUES {placeholders}
+                """
+                option_params = []
+                for idx, opt_text in enumerate(cleaned_options):
+                    label = chr(65 + idx)  # A, B, C, D, ...
+                    is_correct = 1 if opt_text.strip().lower() == correct_answer.strip().lower() else 0
+                    option_params.extend([
+                        data['clientid'],
+                        question_id,
+                        label,
+                        opt_text,
+                        is_correct
+                    ])
+
+                writeQuery(option_query, tuple(option_params))
+        except Exception as e:
+            print(f"Error in insert_option: {e}")   
+            return False
+
+
+def insert_users(insert_values, clientid):
+    try:
+        # Ensure each row has 6 values (excluding clientid) for the 7 columns total
+        formatted_values = []
+        for row in insert_values:
+            if len(row) != 6:
+                raise ValueError("Each row must have exactly 6 values (excluding clientid).")
+            formatted_values.append((clientid,) + row)  # Prepend clientid
+
+        placeholders = ', '.join(['(%s, %s, %s, %s, %s, %s, %s)'] * len(formatted_values))
+        flat_values = [val for row in formatted_values for val in row]
+
+        query = f"""
+            INSERT INTO users
+            (clientid, email, name, username, password, image, usertype)
+            VALUES {placeholders}
+        """
+        writeQuery(query, tuple(flat_values))
+        return True
+
+    except Exception as e:
+        print(f"Error in insert_users: {e}")
+        return False
+
+
+
