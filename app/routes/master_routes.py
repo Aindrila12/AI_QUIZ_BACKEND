@@ -8,6 +8,7 @@ from openpyxl.styles import PatternFill
 from app.validation.master_validation import *
 from app.dao.master_dao import *
 from app.dao.quiz_dao import fetch_all_topics as quiz_all_topics
+import bcrypt
 import os
 
 master_bp = Blueprint('master', __name__)
@@ -121,7 +122,7 @@ def question_sample_excel():
         # Sample data
         ws.append([
             "What is the capital of France?", "MCQ", "",
-            "Paris,London,Berlin", "Paris", levels[0]["name"],
+            "Paris|London|Berlin", "Paris", levels[0]["name"],
             topics[0]["name"], ""
         ])
         ws.append([
@@ -161,6 +162,7 @@ def question_sample_excel():
         ws.add_data_validation(dv_qtype)
         ws.add_data_validation(dv_level)
         ws.add_data_validation(dv_topic)
+        ws.add_data_validation(dv_category)
 
         for row in range(2, 12):  # Example: Apply to first 10 rows
             dv_qtype.add(ws[f"B{row}"])
@@ -271,9 +273,15 @@ def upload_question_excel():
         ws = wb.active
 
         # Fetch reference mappings
-        topics = {t['name']: t['topic_id'] for t in quiz_all_topics({'clientid': clientid})}
-        levels = {l['name']: l['level_id'] for l in fetch_levels({'clientid': clientid})}
-        categories = {c['categoryname']: c['categoryid'] for c in get_all_categories({'clientid': clientid})}
+        topic_list = quiz_all_topics({'clientid': clientid})
+        level_list = fetch_levels({'clientid': clientid})
+        category_list = get_all_categories({'clientid': clientid})
+
+        topics = {t['name']: t['topic_id'] for t in topic_list}
+        levels = {l['name']: l['level_id'] for l in level_list}
+        categories = {c['categoryname']: c['categoryid'] for c in category_list}
+        print(f"Categories: {categories}")
+        category_topic_map = {c['categoryname']: c['topicid'] for c in category_list}
 
         allowed_qtypes = ['MCQ', 'Descriptive']
 
@@ -282,13 +290,16 @@ def upload_question_excel():
         all_rows = []  # Will store (row_index, row_data_dict, errors_list)
 
         for idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+            if all(cell is None or str(cell).strip() == '' for cell in row):
+                continue  # Skip empty rows
+            print(f"Processing row {idx}: {row}")
             question, qtype, desc_ans, options, correct_ans, level_name, topic_name, category_name = row
             row_errors = []
 
             # Validate required fields
             if not question or not qtype or not level_name or not topic_name:
                 row_errors.append("Question, Question Type, Level, and Topic are required.")
-            
+
             # Validate dropdown values
             if qtype and qtype not in allowed_qtypes:
                 row_errors.append("Invalid Question Type. Must be MCQ or Descriptive.")
@@ -296,8 +307,29 @@ def upload_question_excel():
                 row_errors.append(f"Invalid Level: '{level_name}'. Must be selected from dropdown.")
             if topic_name and topic_name not in topics:
                 row_errors.append(f"Invalid Topic: '{topic_name}'. Must be selected from dropdown.")
-            if category_name and category_name not in categories:
-                row_errors.append(f"Invalid Category: '{category_name}'. Must be selected from dropdown or left blank.")
+
+            topic_id = topics.get(topic_name)
+            category_id = categories.get(category_name) if category_name else None
+
+            # if category_name:
+            #     if category_name not in categories:
+            #         row_errors.append(f"Invalid Category: '{category_name}'. Must be selected from dropdown or left blank.")
+            #     elif category_topic_map.get(category_name) != topic_id:
+            #         row_errors.append(f"Category '{category_name}' does not belong to selected topic '{topic_name}'.")
+
+            if topic_name in topics:
+                topic_id = topics.get(topic_name)
+                topic_has_categories = any(cat['topicid'] == topic_id for cat in category_list)
+
+                if topic_has_categories and not category_name:
+                    row_errors.append(f"Topic '{topic_name}' has categories. Category is required.")
+
+                if category_name:
+                    if category_name not in categories:
+                        row_errors.append(f"Invalid Category: '{category_name}'. Must be selected from dropdown.")
+                    elif category_topic_map.get(category_name) != topic_id:
+                        row_errors.append(f"Category '{category_name}' does not belong to selected topic '{topic_name}'.")
+
 
             # Additional logic checks
             if qtype == 'MCQ':
@@ -312,11 +344,11 @@ def upload_question_excel():
                 'question': str(question).strip() if question else '',
                 'question_type': 1 if qtype == 'MCQ' else 2 if qtype == 'Descriptive' else None,
                 'descriptive_answer': str(desc_ans).strip() if desc_ans else '',
-                'options': [opt.strip() for opt in str(options).split(",")] if options else [],
+                'options': [opt.strip() for opt in str(options).split("|")] if options else [],
                 'correct_answer': str(correct_ans).strip() if correct_ans else '',
                 'level_id': levels.get(level_name),
-                'topic_id': topics.get(topic_name),
-                'category_id': categories.get(category_name) if category_name else None
+                'topic_id': topic_id,
+                'category_id': category_id
             }
 
             all_rows.append((idx, row_data, row_errors))
@@ -410,6 +442,7 @@ def upload_question_excel():
             'message': 'Error processing the Excel file.',
             'response': str(e)
         })
+
 
 
 
@@ -589,11 +622,8 @@ def upload_users():
                 'name': str(name).strip() if name else '',
                 'email': str(email).strip() if email else '',
                 'username': str(username).strip() if username else '',
-                'password': 'password123',  # Consider hashing
-                'usertype': 3,
-                'isactive': 1,
-                'isdeleted': 0,
-                'createdat': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                'password': bcrypt.hashpw('password'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8'),
+                'usertype': 3
             }
 
             all_rows.append((idx, row_data, row_errors))
@@ -606,6 +636,32 @@ def upload_users():
         total = len(all_rows)
         valid = len(valid_data)
         valid_percent = (valid / total) * 100 if total > 0 else 0
+        print(f"Total rows: {total}, Valid rows: {valid}, Valid percentage: {valid_percent:.2f}%")
+
+        # If all rows are valid
+        if valid == total:
+            insert_values = []
+            for data in valid_data:
+                insert_values.append((
+                    clientid, data['email'], data['name'], data['username'], data['password'],
+                    None, data['usertype']
+                ))
+
+            result = insert_users(insert_values)
+            if result:
+                return jsonify({
+                    'success': True,
+                    'status': 200,
+                    'message': f"All {valid} users inserted successfully.",
+                    'response': None
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'status': 500,
+                    'message': 'Error inserting users.',
+                    'response': None
+                })
 
         # Generate error Excel file
         error_filename = f"user_upload_errors_{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
@@ -643,10 +699,10 @@ def upload_users():
             for data in valid_data:
                 insert_values.append((
                     clientid, data['email'], data['name'], data['username'], data['password'],
-                    None, data['usertype'], data['isactive'], data['isdeleted'], data['createdat']
+                    None, data['usertype']
                 ))
 
-            insert_users(insert_values, clientid)
+            insert_users(insert_values)
 
             return jsonify({
                 'success': True,
@@ -688,13 +744,14 @@ def topics():
         clientid = data.get('clientid')
 
         topics = fetch_all_topics(data)
-        if not topics:
+        if topics is None:
             return jsonify({
                 'success': False,
                 'status': 500,
                 'message': 'Couldn’t load topics right now. Please try again soon.',
                 'response': None
             })
+        
 
         # Fetch categories grouped by topicid
         category_rows = get_categories(clientid)
@@ -776,7 +833,7 @@ def topic_details():
             })
 
         result = get_topic_details(data)
-        if not result:
+        if result is None:
             return jsonify({
                 'success': False,
                 'status': 500,
@@ -814,7 +871,7 @@ def questions():
             })
 
         questions = fetch_all_questions(data)
-        if not topics:
+        if questions is None:
             return jsonify({
                 'success': False,
                 'status': 500,
@@ -830,7 +887,81 @@ def questions():
         })
 
     except Exception as e:
-        print(f"Error in /topics: {e}")
+        print(f"Error in /questions: {e}")
+        return jsonify({
+            'success': False,
+            'status': 500,
+            'message': 'Something went wrong. Please try again later.',
+            'response': None
+        })
+    
+@master_bp.route('/users', methods=['POST'])
+def users():
+    try:
+        data = request.json
+        if not validate_question_data(data):
+            return jsonify({
+                'success': False,
+                'status': 400,
+                'message': 'Every field is required to start.',
+                'response': None
+            })
+
+        users = fetch_all_users(data)
+        if users is None:
+            return jsonify({
+                'success': False,
+                'status': 500,
+                'message': 'Couldn’t load users right now. Please try again soon.',
+                'response': None
+            })
+
+        return jsonify({
+            'success': True,
+            'status': 200,
+            'message': '',
+            'response': users
+        })
+
+    except Exception as e:
+        print(f"Error in /users: {e}")
+        return jsonify({
+            'success': False,
+            'status': 500,
+            'message': 'Something went wrong. Please try again later.',
+            'response': None
+        })
+    
+@master_bp.route('/error_logs', methods=['POST'])
+def error_logs():
+    try:
+        data = request.json
+        if not validate_question_data(data):
+            return jsonify({
+                'success': False,
+                'status': 400,
+                'message': 'Every field is required to start.',
+                'response': None
+            })
+
+        logs = fetch_all_error_logs(data)
+        if logs is None:
+            return jsonify({
+                'success': False,
+                'status': 500,
+                'message': 'Couldn’t load error logs right now. Please try again soon.',
+                'response': None
+            })
+
+        return jsonify({
+            'success': True,
+            'status': 200,
+            'message': '',
+            'response': logs
+        })
+
+    except Exception as e:
+        print(f"Error in /error_logs: {e}")
         return jsonify({
             'success': False,
             'status': 500,

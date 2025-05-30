@@ -87,28 +87,28 @@ def fetch_all_topics(data):
         if data.get("search"):
             search = " name LIKE %s AND "
             search_params += (f"%{data['search']}%",)
-        query = f"SELECT topic_id, clientid, name, description, image, {config.QSN_COUNT} AS total_qsn FROM mst_topics WHERE " + search +  " clientid = %s LIMIT %s OFFSET %s"
+        query = f"SELECT topic_id, clientid, name, description, image, {config.QSN_COUNT} AS total_qsn FROM mst_topics WHERE " + search +  " clientid = %s ORDER BY topic_id DESC LIMIT %s OFFSET %s"
         search_params += (data["clientid"], int(data["limit"]), int(data["offset"]))
         result = readQuery(query, search_params)
         return result if result else []
     except Exception as e:
         print(f"Error in fetch_all_topics: {e}")
-        return []
+        return None
     
 def fetch_all_questions(data):
     try:
         search = ""
         search_params = ()
         if data.get("search"):
-            search = " q.question_text LIKE %s AND "
-            search_params += (f"%{data['search']}%",)
-        query = f"SELECT q.question_id, q.clientid, q.topic_id, q.categoryid, q.level_id, q.question_text, q.questiontype, t.name AS topicname, c.categoryname, l.name AS level FROM mst_questions q, mst_topics t, mst_categories c, mst_levels l WHERE " + search +  " q.clientid = %s AND q.topic_id = t.topic_id AND q.categoryid = c.categoryid AND q.level_id = l.level_id LIMIT %s OFFSET %s"
+            search = " (q.question_text LIKE %s OR t.name LIKE %s) AND "
+            search_params += (f"%{data['search']}%", f"%{data['search']}%")
+        query = f"SELECT q.question_id, q.clientid, q.topic_id, q.categoryid, q.level_id, q.question_text, q.questiontype, t.name AS topicname, c.categoryname, l.name AS level FROM mst_questions q JOIN mst_topics t ON q.topic_id = t.topic_id JOIN mst_levels l ON q.level_id = l.level_id LEFT JOIN mst_categories c ON q.categoryid = c.categoryid WHERE " + search +  " q.clientid = %s ORDER BY q.question_id DESC LIMIT %s OFFSET %s"
         search_params += (data["clientid"], int(data["limit"]), int(data["offset"]))
         result = readQuery(query, search_params)
         return result if result else []
     except Exception as e:
         print(f"Error in fetch_all_questions: {e}")
-        return []
+        return None
     
 def update_topic_data(data):
     try:
@@ -126,7 +126,7 @@ def get_topic_details(data):
         return result[0] if result else {}
     except Exception as e:
         print(f"Error in update_topic_data: {e}")
-        return False
+        return None
     
 def fetch_levels(data):
     try:
@@ -139,7 +139,7 @@ def fetch_levels(data):
     
 def get_all_categories(data):
     try:
-        query = "SELECT categoryid, categoryname FROM mst_categories  WHERE clientid = %s"
+        query = "SELECT categoryid, categoryname, topicid FROM mst_categories  WHERE clientid = %s"
         result = readQuery(query, (data["clientid"]))
         return result
     except Exception as e:
@@ -148,6 +148,7 @@ def get_all_categories(data):
     
 def insert_question(data):
     try:
+        print("Inserting question with options:", data)
         # Insert question
         question_query = """
             INSERT INTO mst_questions 
@@ -157,9 +158,9 @@ def insert_question(data):
         question_params = (
             data['clientid'],
             data.get('topic_id'),
-            data.get('category_id', 0),
+            data.get('category_id', None),
             data.get('level_id'),
-            data['question_text'],
+            data['question'],
             data['question_type'],
             data.get('descriptive_answer', '')
         )
@@ -195,7 +196,7 @@ def insert_option(data, question_id):
                 """
                 option_params = []
                 for idx, opt_text in enumerate(cleaned_options):
-                    label = chr(65 + idx)  # A, B, C, D, ...
+                    label = chr(97 + idx)  # 'a', 'b', 'c', ...
                     is_correct = 1 if opt_text.strip().lower() == correct_answer.strip().lower() else 0
                     option_params.extend([
                         data['clientid'],
@@ -211,21 +212,17 @@ def insert_option(data, question_id):
             return False
 
 
-def insert_users(insert_values, clientid):
+def insert_users(insert_values):
     try:
-        # Ensure each row has 6 values (excluding clientid) for the 7 columns total
-        formatted_values = []
-        for row in insert_values:
-            if len(row) != 6:
-                raise ValueError("Each row must have exactly 6 values (excluding clientid).")
-            formatted_values.append((clientid,) + row)  # Prepend clientid
-
-        placeholders = ', '.join(['(%s, %s, %s, %s, %s, %s, %s)'] * len(formatted_values))
-        flat_values = [val for row in formatted_values for val in row]
+        # insert_values should already contain tuples with all required fields including clientid
+        placeholders = ', '.join(['(%s, %s, %s, %s, %s, %s, %s)'] * len(insert_values))
+        flat_values = [val for row in insert_values for val in row]
 
         query = f"""
-            INSERT INTO users
-            (clientid, email, name, username, password, image, usertype)
+            INSERT INTO users (
+                clientid, email, name, username, password,
+                image, usertype
+            )
             VALUES {placeholders}
         """
         writeQuery(query, tuple(flat_values))
@@ -234,6 +231,47 @@ def insert_users(insert_values, clientid):
     except Exception as e:
         print(f"Error in insert_users: {e}")
         return False
+
+    
+def fetch_all_users(data):
+    try:
+        search = ""
+        search_params = ()
+        if data.get("search"):
+            search = " (u.name LIKE %s OR u.username LIKE %s) AND "
+            search_params += (f"%{data['search']}%", f"%{data['search']}%")
+        query = f"""
+            SELECT userid, clientid, email, name, username, image, usertype 
+            FROM users
+            WHERE {search} clientid = %s AND usertype = 3 AND isdeleted = 0 ORDER BY userid DESC
+            LIMIT %s OFFSET %s
+        """
+        search_params += (data["clientid"], int(data["limit"]), int(data["offset"]))
+        result = readQuery(query, search_params)
+        return result if result else []
+    except Exception as e:
+        print(f"Error in fetch_all_users: {e}")
+        return None
+    
+def fetch_all_error_logs(data):
+    try:
+        type = ""
+        search_params = ()
+        if data.get("search"):
+            type = " uploadtype LIKE %s AND "
+            search_params += (f"%{data['search']}%",)
+        query = f"""
+            SELECT logid, clientid, uploadtype, filename
+            FROM error_log
+            WHERE {type} clientid = %s AND deleted = 0
+            LIMIT %s OFFSET %s
+        """
+        search_params += (data["clientid"], int(data["limit"]), int(data["offset"]))
+        result = readQuery(query, search_params)
+        return result if result else []
+    except Exception as e:
+        print(f"Error in fetch_all_error_logs: {e}")
+        return None
 
 
 
